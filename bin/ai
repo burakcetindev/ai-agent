@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TEMPLATE_DIR="$HOME/.config/opencode/ai-agent-template/.ai-agent"
+
+add_gitignore_entry() {
+  local entry=".ai-agent/"
+  local file=".gitignore"
+
+  if [[ ! -f "$file" ]]; then
+    printf "%s\n" "$entry" > "$file"
+    return
+  fi
+
+  if ! grep -qxF "$entry" "$file"; then
+    printf "\n%s\n" "$entry" >> "$file"
+  fi
+}
+
+if [[ "${1:-}" == "agent" ]]; then
+  if [[ ! -d "$TEMPLATE_DIR" ]]; then
+    echo "Template not found at $TEMPLATE_DIR"
+    echo "Run ./scripts/install_ai_command.sh from the ai-agent repo first."
+    exit 1
+  fi
+
+  if [[ -e ".ai-agent" ]]; then
+    echo ".ai-agent already exists in $(pwd), leaving it unchanged."
+  else
+    cp -R "$TEMPLATE_DIR" ./.ai-agent
+    echo "Copied .ai-agent into $(pwd)"
+  fi
+
+  add_gitignore_entry
+  echo "Ensured .gitignore contains .ai-agent/"
+  exit 0
+fi
+
+echo "Usage: ai agent"
+exit 1
