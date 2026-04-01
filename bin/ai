@@ -1,10 +1,92 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TEMPLATE_DIR="$HOME/.config/opencode/ai-agent-template/.ai-agent"
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+REPO_TEMPLATE_DIR="$(cd "$SCRIPT_DIR/../templates/.ai-agent" 2>/dev/null && pwd || true)"
+INSTALLED_TEMPLATE_DIR="$HOME/.config/opencode/ai-agent-template/.ai-agent"
+TARGET_BIN_DIR="$HOME/.local/bin"
+TARGET_AI="$TARGET_BIN_DIR/ai"
+AI_FOLDER_NAME=".ai-agent"
+
+remove_line_from_file() {
+  local line="$1"
+  local file="$2"
+
+  if [[ ! -f "$file" ]]; then
+    return
+  fi
+
+  awk -v target="$line" '$0 != target { print }' "$file" > "$file.tmp"
+  mv "$file.tmp" "$file"
+}
+
+find_template_dir() {
+  if [[ -n "$REPO_TEMPLATE_DIR" && -d "$REPO_TEMPLATE_DIR" ]]; then
+    printf "%s\n" "$REPO_TEMPLATE_DIR"
+    return
+  fi
+
+  if [[ -d "$INSTALLED_TEMPLATE_DIR" ]]; then
+    printf "%s\n" "$INSTALLED_TEMPLATE_DIR"
+    return
+  fi
+
+  return 1
+}
+
+install_command() {
+  local template_dir
+  template_dir="$(find_template_dir || true)"
+
+  if [[ -z "$template_dir" ]]; then
+    echo "Template source not found."
+    echo "Expected at either:"
+    echo "- $SCRIPT_DIR/../templates/.ai-agent"
+    echo "- $INSTALLED_TEMPLATE_DIR"
+    exit 1
+  fi
+
+  mkdir -p "$TARGET_BIN_DIR"
+  mkdir -p "$(dirname "$INSTALLED_TEMPLATE_DIR")"
+
+  cp "$SCRIPT_PATH" "$TARGET_AI"
+  chmod +x "$TARGET_AI"
+
+  rm -rf "$INSTALLED_TEMPLATE_DIR"
+  cp -R "$template_dir" "$INSTALLED_TEMPLATE_DIR"
+
+  local zshrc="$HOME/.zshrc"
+  local path_line='export PATH="$HOME/.local/bin:$PATH"'
+  if [[ -f "$zshrc" ]]; then
+    if ! grep -qxF "$path_line" "$zshrc"; then
+      printf "\n%s\n" "$path_line" >> "$zshrc"
+    fi
+  else
+    printf "%s\n" "$path_line" > "$zshrc"
+  fi
+
+  echo "Installed ai command to $TARGET_AI"
+  echo "Installed template to $INSTALLED_TEMPLATE_DIR"
+  echo "Run 'source ~/.zshrc' if your shell does not yet include ~/.local/bin in PATH"
+}
+
+uninstall_command() {
+  local zshrc="$HOME/.zshrc"
+  local path_line='export PATH="$HOME/.local/bin:$PATH"'
+
+  rm -f "$TARGET_AI"
+  rm -rf "$INSTALLED_TEMPLATE_DIR"
+
+  remove_line_from_file "$path_line" "$zshrc"
+
+  echo "Removed command: $TARGET_AI"
+  echo "Removed template cache: $INSTALLED_TEMPLATE_DIR"
+  echo "Removed PATH helper line from $zshrc (if present)"
+}
 
 add_gitignore_entry() {
-  local entry=".ai-agent/"
+  local entry="$1"
   local file=".gitignore"
 
   if [[ ! -f "$file" ]]; then
@@ -17,24 +99,74 @@ add_gitignore_entry() {
   fi
 }
 
-if [[ "${1:-}" == "agent" ]]; then
-  if [[ ! -d "$TEMPLATE_DIR" ]]; then
-    echo "Template not found at $TEMPLATE_DIR"
-    echo "Run ./scripts/install_ai_command.sh from the ai-agent repo first."
-    exit 1
+remove_gitignore_entry() {
+  local entry="$1"
+  local file=".gitignore"
+
+  if [[ ! -f "$file" ]]; then
+    return
   fi
 
-  if [[ -e ".ai-agent" ]]; then
-    echo ".ai-agent already exists in $(pwd), leaving it unchanged."
+  remove_line_from_file "$entry" "$file"
+}
+
+remove_local_agent_folder() {
+  local destination_dir="./$AI_FOLDER_NAME"
+  local entry="${destination_dir#./}/"
+
+  if [[ -d "$destination_dir" ]]; then
+    rm -rf "$destination_dir"
+    echo "Removed $AI_FOLDER_NAME from $(pwd)"
   else
-    cp -R "$TEMPLATE_DIR" ./.ai-agent
-    echo "Copied .ai-agent into $(pwd)"
+    echo "$AI_FOLDER_NAME does not exist in $(pwd), nothing to remove."
   fi
 
-  add_gitignore_entry
-  echo "Ensured .gitignore contains .ai-agent/"
+  remove_gitignore_entry "$entry"
+  echo "Removed $entry from .gitignore if present"
+}
+
+if [[ "${1:-}" == "install" ]]; then
+  install_command
   exit 0
 fi
 
-echo "Usage: ai agent"
+if [[ "${1:-}" == "uninstall" ]]; then
+  uninstall_command
+  exit 0
+fi
+
+if [[ "${1:-}" == "agent" || ( "${1:-}" == "add" && "${2:-}" == "agent" ) || ( "${1:-}" == "add" && "${2:-}" == "ai" && "${3:-}" == "agent" ) ]]; then
+  local_destination_dir="./$AI_FOLDER_NAME"
+  local_gitignore_entry="${local_destination_dir#./}/"
+
+  TEMPLATE_DIR="$(find_template_dir || true)"
+  if [[ -z "$TEMPLATE_DIR" ]]; then
+    echo "Template not found."
+    echo "Run 'ai install' from this repository first."
+    exit 1
+  fi
+
+  if [[ -e "$local_destination_dir" ]]; then
+    echo "$AI_FOLDER_NAME already exists in $(pwd), leaving it unchanged."
+  else
+    cp -R "$TEMPLATE_DIR" "$local_destination_dir"
+    echo "Copied $AI_FOLDER_NAME into $(pwd)"
+  fi
+
+  add_gitignore_entry "$local_gitignore_entry"
+  echo "Ensured .gitignore contains $local_gitignore_entry"
+  exit 0
+fi
+
+if [[ ( "${1:-}" == "rm" && "${2:-}" == "agent" ) || ( "${1:-}" == "rm" && "${2:-}" == "ai" && "${3:-}" == "agent" ) ]]; then
+  remove_local_agent_folder
+  exit 0
+fi
+
+if [[ ( "${1:-}" == "remove" && "${2:-}" == "agent" ) || ( "${1:-}" == "remove" && "${2:-}" == "ai" && "${3:-}" == "agent" ) ]]; then
+  remove_local_agent_folder
+  exit 0
+fi
+
+echo "Usage: ai <install|uninstall|agent|add agent|add ai agent|rm agent|rm ai agent|remove agent|remove ai agent>"
 exit 1
